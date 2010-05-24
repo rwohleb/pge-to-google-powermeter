@@ -18,7 +18,7 @@
 # 2) Requires the PG&E files to have "kWh" on the line before the
 # measurements.
 #
-# 3) The PG&E script wants *accumulated* measurements, at least with
+# 3) Google's script wants *accumulated* measurements, at least with
 # the options I passed; this should be unnecessary.
 #
 # 4) Assumes hour-granularity. Ideally I'd parse the Time row I guess.
