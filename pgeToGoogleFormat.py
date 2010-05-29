@@ -32,6 +32,11 @@
 # include a DST transition (1 day in Fall, 1 day in Spring). Framework
 # for handling this is there, but I haven't gotten around to it yet.
 #
+# 2) If the PG&E provided durations are non-uniform, then the last entry 
+# may be incorrect. This shouldn't really happen anyways.
+#
+# 3) I do a lot of Error/Warning/Info printfs, but I should probably use the
+# Log class. 
 #
 
 import os
