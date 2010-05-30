@@ -1,10 +1,9 @@
 #!/usr/bin/python2.6 
 # pgeToGoogleFormat.py
+# 	Reads and transmit PG&E SmartMeter CSV data to Google PowerMeter.
+# 	http://gitorious.org/pge-to-google-powermeter/
 #
-# Author: Andrew Potter
-# Website: http://gitorious.org/pge-to-google-powermeter/
-#
-# Copyright 2010 Andrew Potter
+#   Copyright (C) 2010  Andrew Potter
 #
 #   This program is free software: you can redistribute it and/or modify
 #   it under the terms of the GNU General Public License as published by
@@ -34,7 +33,7 @@
 # variable (e.g. dvars=1). Note that on the final confirmation screen
 # Google gives a "path" variable. The input to this script must be the variable.
 # For example, Google says your path is "/user/1234/5678/variable/abcde"
-# The variable is then "/user/1234/5678/variable/abcde.d1"
+# The variable is then                  "/user/1234/5678/variable/abcde.d1"
 #
 # 3) Download your data files from PG&E. If you can automate this, I'd
 # love to get a script!
