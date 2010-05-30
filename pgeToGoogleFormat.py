@@ -233,8 +233,10 @@ def parseHeader(row):
     handleMissingData(row)
 
 def handleMissingData(row,days):
+  # TODO: remove the day element from days that corresponds to the missing data.
   print 'Warning: ' + row[0]
   print '\tThis is an unhandled special case, but it should still work. Expect usage to be 0'
+  print '\tYou can always upload the same day later once the data is published and overwrite the zeros.'
 
 def parseTimes(times):
   # Parse the times
@@ -431,6 +433,11 @@ if __name__ == '__main__':
           else:
             (times, diff) = parseTimes(row)
         else:
+          # Following two if statements weed out info from Daily reports.
+          if row[0].startswith('Cost') or row[0].startswith('per kWh'):
+            continue
+          if row[1].count('$') > 0:
+            continue
           if not row[0].startswith('Missing data'):
                 days.append(parseDay(row))
           else:
@@ -456,7 +463,7 @@ if __name__ == '__main__':
           readings.append(measurement)
     else:
       print "Warning: There are %d energy readings but %d associated timeslots for day %s." % (len(readings),len(times),day.day.isoformat())
-      print "\tPlease upload your file to the wiki, or provide a patch to handle your input."
+      print '\tPlease upload your data file to the wiki (strip sensitive info!), and/or provide a patch to handle your input.'
       
   print "Info: Processed %d durational readings. Now attempting to upload to Google." % len(readings)
 
