@@ -1,6 +1,25 @@
 #!/usr/bin/python2.6 
 # pgeToGoogleFormat.py
 #
+# Author: Andrew Potter
+# Website: http://gitorious.org/pge-to-google-powermeter/
+#
+# Copyright 2010 Andrew Potter
+#
+#   This program is free software: you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+#
 # Reads hourly-usage data from PG&E-provided .CSV files and uploads to
 # Google PowerMeter using their Python API. The user of this script
 # must:
@@ -26,16 +45,29 @@
 # block you for a while.
 #
 #
-# Bugs:
+# Features: Directly uploads to Google PowerMeter. 
+#           Handles Daylight Savings transitions correctly as of 2010. 
+#               
+#
+# Bugs / Assumptions:
+#
+# A1) Assumes times given are all in Pacific time. Which is how the
+# files I've downloaded from PG&E are specified. Unfortunately the
+# header data does not specify the time zone, so we have to make this
+# assumption.
 # 
-# 1) Currently the script does not upload any data for days that
-# include a DST transition (1 day in Fall, 1 day in Spring). Framework
-# for handling this is there, but I haven't gotten around to it yet.
+# A2) Expects only hourly data. If PG&E ever offers higher resolution,
+# two things must happen:
+#    1) in parseHeaders(), don't abort if the title isn't 'Hourly Usage'
+#    2) processDSTDay() has to be modified to handle whatever the new format is.
 #
-# 2) If the PG&E provided durations are non-uniform, then the last entry 
-# may be incorrect. This shouldn't really happen anyways.
+#    Basically, other than handling DST transitions everything should
+#    be ready to go as long as the time header is the same.
 #
-# 3) I do a lot of Error/Warning/Info printfs, but I should probably use the
+# B1) If the PG&E provided durations are non-uniform, then the last entry 
+# may be incorrect. This shouldn't really happen anyways. 
+#
+# B2) I do a lot of Error/Warning/Info printfs, but I should probably use the
 # Log class. 
 #
 
@@ -158,6 +190,29 @@ class USTimeZone(tzinfo):
         else:
             return ZERO
 
+class ZuluTimeZone(tzinfo):
+    def __init__(self, hours, reprname, stdname, dstname):
+        self.stdoffset = timedelta(hours=hours)
+        self.reprname = reprname
+        self.stdname = stdname
+        self.dstname = dstname
+
+    def __repr__(self):
+        return self.reprname
+
+    def tzname(self, dt):
+        if self.dst(dt):
+            return self.dstname
+        else:
+            return self.stdname
+
+    def utcoffset(self, dt):
+        return ZERO
+
+    def dst(self, dt):
+      return ZERO
+
+Zulu     = ZuluTimeZone(0, "Zulu", "Z", "Z")
 Eastern  = USTimeZone(-5, "Eastern",  "EST", "EDT")
 Central  = USTimeZone(-6, "Central",  "CST", "CDT")
 Mountain = USTimeZone(-7, "Mountain", "MST", "MDT")
@@ -218,7 +273,7 @@ def parseTimes(times):
       print 'Warning: Unexpected difference in the times between each reading. Please upload your input file to the project website.'
       print '\tProcessing will continue, but the final timeslot\'s endtime may be incorrect.'
     i += 1
-  return convTimes
+  return (convTimes, diff)
 
 def parseDay(row):
   # Grab the date from the first column
@@ -280,20 +335,16 @@ def isDSTBoundary(day):
   if Pacific.dst(dAfter) == Pacific.dst(dBefore):
     return (False, None)
   else:
-    if dAfter.utcoffset() == 7:
+    if dAfter.utcoffset() == timedelta(days=-1,hours=17):
       isSpring = True
     else:
       isSpring = False
     return (True, isSpring)
 
-def processNormalDay(day, times):
+def processNormalDay(day, times, diff):
   i = 0
-  d = date(2010,1,2)
-  d1 = datetime.combine(d,times[0])
-  d2 = datetime.combine(d,times[1])
-  diff = d2 - d1
-
   measurements = list()
+
   while i < len(times):
     start = datetime.combine(day.day, times[i])
     energy = day.readings[i]
@@ -307,6 +358,60 @@ def processNormalDay(day, times):
 
   return measurements
 
+def processDSTDay(day, times, isSpring, diff): 
+  measurements = list()
+
+  if len(times) != 24:
+    print 'Error: DST transition, but data is not strictly hourly.'
+    print '\tPlease make a patch and/or alert the project at http://gitorious.org/pge-to-google-powermeter/pages/Home'
+    print len(times)
+    return measurements
+
+  if (isSpring):
+    # We are springing ahead, 2 AM becomes 3 AM.
+    # In PG&E's file, they have a '-' for 2 AM
+    for i in range(len(times)):
+      if i == 1:
+        start = datetime.combine(day.day, times[i])
+        energy = day.readings[i]
+        end = datetime.combine(day.day, times[i+2])
+        measurements.append(DurationalMeasurement(start,end,energy))
+      elif i == 2:
+        # Do nothing
+        print 'Info: Springing ahead 1 hour.'
+      elif i == 23:
+        start = datetime.combine(day.day, times[i])
+        energy = day.readings[i]
+        end = datetime.combine(day.day, times[i])
+        end += diff
+        measurements.append(DurationalMeasurement(start,end,energy))
+      else:
+        start = datetime.combine(day.day, times[i])
+        energy = day.readings[i]
+        end = datetime.combine(day.day, times[i+1])
+        measurements.append(DurationalMeasurement(start,end,energy))
+  else:
+    # We are Falling behind. 3 am becomes 2 AM.
+    # In PG&E's file, the 1 AM-2 AM slot has 2 hours worth of data
+    # So it is really 1 AM - 3 AM. Or something.
+    for i in range(len(times)):
+      start = datetime.combine(day.day, times[i])
+      energy = day.readings[i]
+      if i == 0:
+        end = datetime.combine(day.day, time(8,0,0,tzinfo=Zulu))
+      elif i == 1:
+        print 'Info: Falling behind 1 hour.'
+        start = datetime.combine(day.day, time(8,0,0,tzinfo=Zulu))
+        end = datetime.combine(day.day, time(10,0,0,tzinfo=Zulu))
+      elif i == 23:
+        end = datetime.combine(day.day, times[i])
+        end += diff
+      else:
+        end = datetime.combine(day.day, times[i+1])
+      measurements.append(DurationalMeasurement(start,end,energy))                           
+  
+  return measurements
+    
 if __name__ == '__main__':
   (args, options) = ParseArguments()
   token = args[0]
@@ -324,7 +429,7 @@ if __name__ == '__main__':
           if not row[0].startswith('kWh'):
             parseHeader(row)
           else:
-            times = parseTimes(row)
+            (times, diff) = parseTimes(row)
         else:
           if not row[0].startswith('Missing data'):
                 days.append(parseDay(row))
@@ -343,16 +448,17 @@ if __name__ == '__main__':
     if len(day.readings) == len(times):
       (isDST, isSpring) = isDSTBoundary(day.day)
       if isDST:
-        readings.append(processDSTDay(day, times, isSpring))
         print 'Warning: Handling DST transition. This code is fragile.'
+        for measurement in processDSTDay(day, times, isSpring, diff):
+          readings.append(measurement)
       else:
-        for measurement in processNormalDay(day,times):
+        for measurement in processNormalDay(day,times, diff):
           readings.append(measurement)
     else:
       print "Warning: There are %d energy readings but %d associated timeslots for day %s." % (len(readings),len(times),day.day.isoformat())
       print "\tPlease upload your file to the wiki, or provide a patch to handle your input."
       
-  print "Info: Processed %d durational readings." % len(readings)
+  print "Info: Processed %d durational readings. Now attempting to upload to Google." % len(readings)
 
   log = google_meter.Log(1)
 
@@ -364,6 +470,7 @@ if __name__ == '__main__':
       service, variable, options.uncertainty * units.KILOWATT_HOUR,
       options.time_uncertainty, True)
 
+  
   for reading in readings:
     start = rfc3339.FromTimestamp(reading.dStart.isoformat())
     end = rfc3339.FromTimestamp(reading.dEnd.isoformat())
