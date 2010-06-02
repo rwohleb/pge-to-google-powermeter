@@ -228,10 +228,8 @@ def parseHeader(row):
       print 'Primary Data Unit is ' + row[1]
       print 'The only supported unit is kWh!'
       exit(1)
-  elif row[0].startswith('Missing data'):
-    handleMissingData(row)
 
-def handleMissingData(row,days):
+def handleMissingData(row):
   # TODO: remove the day element from days that corresponds to the missing data.
   print 'Warning: ' + row[0]
   print '\tThis is an unhandled special case, but it should still work. Expect usage to be 0'
@@ -279,16 +277,20 @@ def parseTimes(times):
 def parseDay(row):
   # Grab the date from the first column
   # and the measurements from the rest
-  row.reverse()
-  datestr = row.pop()
-  row.reverse()
+  datestr = row.pop(0)
 
+  dashcount = 0
   readings = list()
   for reading in row:
     if reading != '-':
       readings.append(float(reading))
     else:
       readings.append(float(0))
+      dashcount += 1
+
+  if dashcount == 24:
+    readings = list()
+    print "Warning: Input file has no valid readings for %s." % datestr
 
   # Parse the date
   # Sometimes PG&E has double quotes, sometimes not.
@@ -435,12 +437,13 @@ if __name__ == '__main__':
           # Following two if statements weed out info from Daily reports.
           if row[0].startswith('Cost') or row[0].startswith('per kWh'):
             continue
-          if row[1].count('$') > 0:
-            continue
+          if len(row) > 1:
+            if row[1].count('$') > 0:
+              continue
           if not row[0].startswith('Missing data'):
                 days.append(parseDay(row))
           else:
-            handleMissingData(row,days)
+            handleMissingData(row)
 
   if len(times) <= 0:
     print 'Error: Read input file, but never read the time header.'
@@ -460,7 +463,7 @@ if __name__ == '__main__':
       else:
         for measurement in processNormalDay(day,times, diff):
           readings.append(measurement)
-    else:
+    elif len(day.readings) > 0:
       print "Warning: There are %d energy readings but %d associated timeslots for day %s." % (len(readings),len(times),day.day.isoformat())
       print '\tPlease upload your data file to the wiki (strip sensitive info!), and/or provide a patch to handle your input.'
       
