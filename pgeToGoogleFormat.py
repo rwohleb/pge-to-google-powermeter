@@ -73,6 +73,7 @@
 import os
 import sys
 import csv
+import time as sleeptime
 from datetime import tzinfo, timedelta, datetime, date, time
 from optparse import OptionParser
 import google_meter
@@ -140,7 +141,6 @@ arguments:
     sys.stderr.write('Error: No input file specified.\n')
     op.exit(2, op.format_help())
 
-  exit(1) 
   return (args, options)
 
 def checkConfigfile(filename,var):
@@ -473,17 +473,10 @@ def processDSTDay(day, times, isSpring, diff):
       measurements.append(DurationalMeasurement(start,end,energy))                           
   
   return measurements
-    
-if __name__ == '__main__':
-  (args, options) = parseArguments()
 
-  token = options.token
-  variable = options.variable
-  filename = args[0]
-
+def readfile(filename):
   with open(filename, 'r') as f:
     csvReader = csv.reader(f,delimiter=',',quotechar='"')
-    
     times = list()
     days = list()
     for row in csvReader:
@@ -501,17 +494,12 @@ if __name__ == '__main__':
             if row[1].count('$') > 0:
               continue
           if not row[0].startswith('Missing data'):
-                days.append(parseDay(row))
+            days.append(parseDay(row))
           else:
             handleMissingData(row)
-
-  if len(times) <= 0:
-    print 'Error: Read input file, but never read the time header.'
-    exit(1)
-  if len(days) <= 0:
-    print 'Error: Read input file, but never parsed any electricity usage data.'
-    exit(1)
-
+    return (times, diff, days)
+            
+def parseToReadings(times, diff, days):
   readings = list()
   for day in days:
     if len(day.readings) == len(times):
@@ -526,23 +514,60 @@ if __name__ == '__main__':
     elif len(day.readings) > 0:
       print "Warning: There are %d energy readings but %d associated timeslots for day %s." % (len(readings),len(times),day.day.isoformat())
       print '\tPlease upload your data file to the wiki (strip sensitive info!), and/or provide a patch to handle your input.'
+  return readings
+
+if __name__ == '__main__':
+  (args, options) = parseArguments()
+
+  token = options.token
+  variable = options.variable
+  filename = args[0]
+
+  readings = list()
+
+  for filename in args:
+    (times, diff, days) = readfile(filename)
+
+    if len(times) <= 0:
+      sys.stderr.write('Error: Read input file, but never read the time header.\n')
+      sys.stderr.write("Ignoring file '%s'\n" % filename)
+      continue
+    if len(days) <= 0:
+      sys.stderr.write('Error: Read input file, but never parsed any electricity usage data.\n')
+      sys.stderr.write("Ignoring file '%s'\n" % filename)
+      continue
+
+    readings.extend(parseToReadings(times, diff, days))
+  
       
   print "Info: Processed %d durational readings. Now attempting to upload to Google." % len(readings)
 
   log = google_meter.Log(1)
-
   service = google_meter.Service(token, options.service, log=log)
-  
   service = google_meter.BatchAdapter(service)
-
   meter = google_meter.Meter(
       service, variable, options.uncertainty * units.KILOWATT_HOUR,
       options.time_uncertainty, True)
 
-  
-  for reading in readings:
-    start = rfc3339.FromTimestamp(reading.dStart.isoformat())
-    end = rfc3339.FromTimestamp(reading.dEnd.isoformat())
-    meter.PostDur(start,end,reading.energy * units.KILOWATT_HOUR,reading.uncertainty * units.KILOWATT_HOUR)
-  service.Flush()
+  for i in range(len(readings)/1000 + 1):
+    if len(readings) > 1000:
+      for j in range(1000):
+        reading = readings.pop()
+        start = rfc3339.FromTimestamp(reading.dStart.isoformat())
+        end = rfc3339.FromTimestamp(reading.dEnd.isoformat())
+        meter.PostDur(start,end,reading.energy * units.KILOWATT_HOUR,reading.uncertainty * units.KILOWATT_HOUR)
+    else:
+      for reading in readings:
+        start = rfc3339.FromTimestamp(reading.dStart.isoformat())
+        end = rfc3339.FromTimestamp(reading.dEnd.isoformat())
+        meter.PostDur(start,end,reading.energy * units.KILOWATT_HOUR,reading.uncertainty * units.KILOWATT_HOUR)
+      service.Flush()
+      break
+    service.Flush()
+    print "There remains %d measurements to upload." % len(readings)
+    for k in range(10):
+      print "Sleeping for %d minutes." % (10-k)
+      sleeptime.sleep(60)
+
+
 
