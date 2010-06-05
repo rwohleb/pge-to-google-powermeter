@@ -78,31 +78,90 @@ from optparse import OptionParser
 import google_meter
 import units
 import rfc3339
+import ConfigParser as cp
 
-def ParseArguments():
-  op = OptionParser('%prog <token> <variable> <Filename.csv> \n\n' + '''
+programVersion = '0.9'
+programName = 'pge2google'
+config_filename = 'config'
+
+def parseArguments():
+  op = OptionParser('%prog [--token <token>] [--variable <variable>] Filename.csv [File2.csv [...]]\n\n' + '''
 arguments:
-  <token>               AuthSub token for GData requests (required)
-  <variable>            entity path of a PowerMeter variable (required)
-  <Filename.csv>        The Hourly usage CSV datafile from PG&E (required)''')
+  Filename.csv        The Hourly usage CSV datafile from PG&E (required)''', version="%s %s" % (programName, programVersion))
+  op.add_option('', '--token', metavar='<token>',
+                help='Google PowerMeter OAUTH Token'
+                     ' (default: None)')
+  op.add_option('', '--variable', metavar='<variable>',
+                help='Google PowerMeter Variable'
+                     ' (default: None)')
   op.add_option('', '--service', metavar='<URI>',
                 help='URI prefix of the GData service to contact '
                      '(default: https://www.google.com/powermeter/feeds)')
-  op.add_option('', '--unit', metavar='<symbol>',
-                help='units of the measurements being posted (default: kW h)')
-  op.add_option('', '--uncertainty', metavar='<uncertainty in kW h>',
-                help='Uncertainty in measurements being posted (default: 0.001)')
-  op.add_option('', '--time_uncertainty', metavar='<seconds>', type='float',
-                help='uncertainty in measured times (default: 1)'),
+  op.add_option('-f','--configFile', metavar='<configFile>', help="Path and filename of configuration file (default: ~/.local/%s/config)" % programName)
 
   op.set_defaults(service='https://www.google.com/powermeter/feeds',
                   unit='kW h', uncertainty=0.001, time_uncertainty=1)
 
   # Parse and validate the command-line options.
   options, args = op.parse_args()
-  if len(args) != 3:
-    op.exit(1, op.format_help())
+
+  # Check for config file, setup default otherwise
+  if options.configFile == None:
+      home = os.getenv('HOME')
+      config_home = os.getenv('XDG_CONFIG_HOME',"%s/.local/" % home)
+      config_dir = "%s%s" % (config_home,programName)
+      filepath = "%s/%s" % (config_dir, config_filename)
+      if os.path.exists(config_home):
+        if os.path.exists(config_dir):
+          if os.path.exists(filepath):
+            options.configFile = filepath
+  else:
+    if not os.path.exists(options.configFile):
+      if os.path.exists(os.getcwd() + options.configFile):
+        options.configFile = os.getcwd() + options.configFile
+      else:
+        sys.stderr.write("Error: Can not find config file '%s'\n" % options.configFile)
+        exit(2)
+  
+  if options.token == None:
+    if checkConfigfile(options.configFile,'token'):
+      options.token = getConfigfile(options.configFile,'token')
+    else:
+      sys.stderr.write('Error: Missing Google Power Meter OAuth token. \nToken must be supplied via --token or in the config file.\n')
+      op.exit(2, op.format_help())
+  if options.variable == None:
+    if checkConfigfile(options.configFile,'variable'):
+      options.variable = getConfigfile(options.configFile,'variable')
+    else:
+      sys.stderr.write('Error: Missing Google Power Meter variable.\nVariable must be supplied via --variable or in the config file.\n')
+      op.exit(2,op.format_help())
+
+  if len(args) < 1:
+    sys.stderr.write('Error: No input file specified.\n')
+    op.exit(2, op.format_help())
+
+  exit(1) 
   return (args, options)
+
+def checkConfigfile(filename,var):
+  with open(filename) as f:
+    parser = cp.SafeConfigParser()
+    try:
+      parser.readfp(f)
+      hasVar = parser.has_option('main',var)
+      return hasVar
+    except cp.MissingSectionHeaderError:
+      sys.stderr.write("Error: Config file seems to be invalid (Missing Section 'main')\n")
+      exit(1)
+  return False
+
+def getConfigfile(filename,var):
+  with open(filename) as f:
+    parser = cp.SafeConfigParser()
+    parser.readfp(f)
+    return parser.get('main',var)
+  return None
+
 
 ZERO = timedelta(0)
 HOUR = timedelta(hours=1)
@@ -416,10 +475,11 @@ def processDSTDay(day, times, isSpring, diff):
   return measurements
     
 if __name__ == '__main__':
-  (args, options) = ParseArguments()
-  token = args[0]
-  variable = args[1]
-  filename = args[2]
+  (args, options) = parseArguments()
+
+  token = options.token
+  variable = options.variable
+  filename = args[0]
 
   with open(filename, 'r') as f:
     csvReader = csv.reader(f,delimiter=',',quotechar='"')
