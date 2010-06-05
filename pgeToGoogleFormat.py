@@ -296,9 +296,7 @@ def handleMissingData(row):
 
 def parseTimes(times):
   # Parse the times
-  times.reverse()
-  times.pop()
-  times.reverse()
+  times.pop(0)
 
   convTimes = list()
   for timeElement in times:
