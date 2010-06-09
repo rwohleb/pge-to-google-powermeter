@@ -63,10 +63,7 @@
 #    Basically, other than handling DST transitions everything should
 #    be ready to go as long as the time header is the same.
 #
-# B1) If the PG&E provided durations are non-uniform, then the last entry 
-# may be incorrect. This shouldn't really happen anyways. 
-#
-# B2) I do a lot of Error/Warning/Info printfs, but I should probably use the
+# B1) I do a lot of Error/Warning/Info printfs, but I should probably use the
 # Log class. 
 #
 
@@ -165,6 +162,7 @@ def getConfigfile(filename,var):
 
 ZERO = timedelta(0)
 HOUR = timedelta(hours=1)
+DAY  = timedelta(days=1)
 
 def first_sunday_on_or_after(dt):
     days_to_go = 6 - dt.weekday()
@@ -280,25 +278,25 @@ Pacific  = USTimeZone(-8, "Pacific",  "PST", "PDT")
 def parseHeader(row):
   if row[0] == 'Title':
     if row[1] != 'Hourly Usage':
-      print 'Input file is not "Hourly Usage"-type!'
+      print 'Error: Input file is not "Hourly Usage"-type!'
       exit(1)
   elif row[0] == 'Primary Data Unit':
     if row[1] != 'kWh' and row[1] != 'k Wh':
-      print 'Primary Data Unit is ' + row[1]
-      print 'The only supported unit is kWh!'
+      print 'Error: Primary Data Unit is ' + row[1]
+      print 'Error: The only supported unit is kWh!'
       exit(1)
 
-def handleMissingData(row):
-  # TODO: remove the day element from days that corresponds to the missing data.
-  print 'Warning: ' + row[0]
-  print '\tThis is an unhandled special case, but it should still work. Expect usage to be 0'
-  print '\tYou can always upload the same day later once the data is published and overwrite the zeros.'
+def handleMissingData(row, days):
+  """Removes the day element from days that corresponds to the missing data."""
+  # Do nothing. PG&E will report that data is missing for a day even if it is missing
+  # only 1 hour of data -- such as on 3/14 (DST Spring). 
+  #
+  # Rather than taking PG&E's hint, we should handle this in parseToReadings
 
 def parseTimes(times):
   # Parse the times
-  times.pop(0)
-
   convTimes = list()
+  times.pop(0) # Get rid of the header
   for timeElement in times:
     (timeElement,ampm) = timeElement.split(' ')
     colonCount = timeElement.count(':')
@@ -320,16 +318,7 @@ def parseTimes(times):
       else:
         # We are PM, and not noon
         convTimes.append(time(hour+12,minute,second,tzinfo=Pacific))
-
-  d = date(2010,1,2)
-  diff = datetime.combine(d,convTimes[1]) - datetime.combine(d,convTimes[0])
-  i = 1
-  while i < len(convTimes):
-    if (datetime.combine(d,convTimes[i]) - datetime.combine(d,convTimes[i - 1])) != diff:
-      print 'Warning: Unexpected difference in the times between each reading. Please upload your input file to the project website.'
-      print '\tProcessing will continue, but the final timeslot\'s endtime may be incorrect.'
-    i += 1
-  return (convTimes, diff)
+  return convTimes
 
 def parseDay(row):
   # Grab the date from the first column
@@ -342,6 +331,9 @@ def parseDay(row):
     if reading != '-':
       readings.append(float(reading))
     else:
+      # TODO: We should simply ignore this data point.
+      #       This requires changing the dataflow, so that 'times' is passed in here
+      #       and the DurationalMeasurements are produced here rather than later.
       readings.append(float(0))
       dashcount += 1
 
@@ -351,6 +343,7 @@ def parseDay(row):
 
   # Parse the date
   # Sometimes PG&E has double quotes, sometimes not.
+  # TODO: This may be redundant now that I use csvreader
   (month,day,year) = datestr.split('/')
   month = month.replace('"','')
   year = year.replace('"','')
@@ -383,7 +376,7 @@ class DurationalMeasurement:
     self.dStart = dStart
     self.dEnd = dEnd
     self.energy = energy
-    self.uncertainty = self.defaultUncertainty
+    self.uncertainty = DurationalMeasurement.defaultUncertainty
 
   def setUncertainty(self, uncertainty):
     self.uncertainty = uncertainty
@@ -401,75 +394,66 @@ def isDSTBoundary(day):
       isSpring = False
     return (True, isSpring)
 
-def processNormalDay(day, times, diff):
-  i = 0
+def processNormalDay(day, times):
   measurements = list()
-
-  while i < len(times):
+  i = 0
+  for i in range(len(times)):
     start = datetime.combine(day.day, times[i])
     energy = day.readings[i]
     if i != len(times) - 1:
       end = datetime.combine(day.day, times[i+1])
     else:
-      end = datetime.combine(day.day, times[i])
-      end += diff
-    i += 1
+      end = datetime.combine(day.day, times[0]) + DAY
     measurements.append(DurationalMeasurement(start,end,energy))
-
   return measurements
 
-def processDSTDay(day, times, isSpring, diff): 
+def processDSTDay(day, times, isSpring): 
   measurements = list()
 
+  # TODO: This has to change if postings not hourly
   if len(times) != 24:
-    print 'Error: DST transition, but data is not strictly hourly.'
-    print '\tPlease make a patch and/or alert the project at http://gitorious.org/pge-to-google-powermeter/pages/Home'
+    sys.stderr.write("Error: DST transition on %s, but data is not strictly hourly.\n" % day)
+    sys.stderr.write('\tPlease make a patch and/or alert the project at:\n\thttp://gitorious.org/pge-to-google-powermeter/pages/Home\n')
+    sys.stderr.write('\tProcessing of other files will continue if possible.')
     print len(times)
     return measurements
+  # End TODO
 
   if (isSpring):
     # We are springing ahead, 2 AM becomes 3 AM.
     # In PG&E's file, they have a '-' for 2 AM
     for i in range(len(times)):
+      start = datetime.combine(day.day, times[i])
+      energy = day.readings[i]
       if i == 1:
-        start = datetime.combine(day.day, times[i])
-        energy = day.readings[i]
         end = datetime.combine(day.day, times[i+2])
-        measurements.append(DurationalMeasurement(start,end,energy))
-      elif i == 2:
+      elif i == 2: #TODO: This has to change if postings not hourly
         # Do nothing
         print 'Info: Springing ahead 1 hour.'
-      elif i == 23:
-        start = datetime.combine(day.day, times[i])
-        energy = day.readings[i]
-        end = datetime.combine(day.day, times[i])
-        end += diff
-        measurements.append(DurationalMeasurement(start,end,energy))
+        continue
+      elif i == (len(times) - 1):
+        end = datetime.combine(day.day, times[0]) + DAY
       else:
-        start = datetime.combine(day.day, times[i])
-        energy = day.readings[i]
         end = datetime.combine(day.day, times[i+1])
-        measurements.append(DurationalMeasurement(start,end,energy))
+      measurements.append(DurationalMeasurement(start,end,energy))
   else:
     # We are Falling behind. 3 am becomes 2 AM.
     # In PG&E's file, the 1 AM-2 AM slot has 2 hours worth of data
-    # So it is really 1 AM - 3 AM. Or something.
+    # So it is really 1 AM - 3 AM, in a DSTless world.
     for i in range(len(times)):
       start = datetime.combine(day.day, times[i])
       energy = day.readings[i]
       if i == 0:
         end = datetime.combine(day.day, time(8,0,0,tzinfo=Zulu))
-      elif i == 1:
+      elif i == 1: #TODO: This has to change if postings not hourly
         print 'Info: Falling behind 1 hour.'
         start = datetime.combine(day.day, time(8,0,0,tzinfo=Zulu))
         end = datetime.combine(day.day, time(10,0,0,tzinfo=Zulu))
-      elif i == 23:
-        end = datetime.combine(day.day, times[i])
-        end += diff
+      elif i == (len(times)-1):
+        end = datetime.combine(day.day, times[0]) + DAY
       else:
         end = datetime.combine(day.day, times[i+1])
       measurements.append(DurationalMeasurement(start,end,energy))                           
-  
   return measurements
 
 def readfile(filename):
@@ -483,7 +467,7 @@ def readfile(filename):
           if not row[0].startswith('kWh'):
             parseHeader(row)
           else:
-            (times, diff) = parseTimes(row)
+            times = parseTimes(row)
         else:
           # Following two if statements weed out info from Daily reports.
           if row[0].startswith('Cost') or row[0].startswith('per kWh'):
@@ -494,20 +478,19 @@ def readfile(filename):
           if not row[0].startswith('Missing data'):
             days.append(parseDay(row))
           else:
-            handleMissingData(row)
-    return (times, diff, days)
+            handleMissingData(row, days)
+    return (times, days)
             
-def parseToReadings(times, diff, days):
+def parseToReadings(times, days):
   readings = list()
   for day in days:
     if len(day.readings) == len(times):
       (isDST, isSpring) = isDSTBoundary(day.day)
       if isDST:
-        print 'Warning: Handling DST transition. This code is fragile.'
-        for measurement in processDSTDay(day, times, isSpring, diff):
+        for measurement in processDSTDay(day, times, isSpring):
           readings.append(measurement)
       else:
-        for measurement in processNormalDay(day,times, diff):
+        for measurement in processNormalDay(day,times):
           readings.append(measurement)
     elif len(day.readings) > 0:
       print "Warning: There are %d energy readings but %d associated timeslots for day %s." % (len(readings),len(times),day.day.isoformat())
@@ -515,16 +498,14 @@ def parseToReadings(times, diff, days):
   return readings
 
 if __name__ == '__main__':
-  (args, options) = parseArguments()
+  (filenames, options) = parseArguments()
 
   token = options.token
   variable = options.variable
-  filename = args[0]
-
   readings = list()
 
-  for filename in args:
-    (times, diff, days) = readfile(filename)
+  for filename in filenames:
+    (times, days) = readfile(filename)
 
     if len(times) <= 0:
       sys.stderr.write('Error: Read input file, but never read the time header.\n')
@@ -535,7 +516,7 @@ if __name__ == '__main__':
       sys.stderr.write("Ignoring file '%s'\n" % filename)
       continue
 
-    readings.extend(parseToReadings(times, diff, days))
+    readings.extend(parseToReadings(times, days))
   
       
   print "Info: Processed %d durational readings. Now attempting to upload to Google." % len(readings)
