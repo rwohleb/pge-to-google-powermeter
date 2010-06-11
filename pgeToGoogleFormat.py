@@ -63,7 +63,7 @@
 #    Basically, other than handling DST transitions everything should
 #    be ready to go as long as the time header is the same.
 #
-# B1) I do a lot of Error/Warning/Info printfs, but I should probably use the
+# B2) I do a lot of Error/Warning/Info printfs, but I should probably use the
 # Log class. 
 #
 
@@ -96,6 +96,7 @@ arguments:
                 help='URI prefix of the GData service to contact '
                      '(default: https://www.google.com/powermeter/feeds)')
   op.add_option('-f','--configFile', metavar='<configFile>', help="Path and filename of configuration file (default: ~/.local/%s/config)" % programName)
+  op.add_option('-d','--debug', dest="isDebug", action="store_true", help="Disable upload to Google (default: false)", default=False)
 
   op.set_defaults(service='https://www.google.com/powermeter/feeds',
                   unit='kW h', uncertainty=0.001, time_uncertainty=1)
@@ -274,8 +275,10 @@ Central  = USTimeZone(-6, "Central",  "CST", "CDT")
 Mountain = USTimeZone(-7, "Mountain", "MST", "MDT")
 Pacific  = USTimeZone(-8, "Pacific",  "PST", "PDT")
 
+def parseHeader(row, headers):
+  if (len(row) == 2):
+    headers[row[0]] = row[1]
 
-def parseHeader(row):
   if row[0] == 'Title':
     if row[1] != 'Hourly Usage':
       print 'Error: Input file is not "Hourly Usage"-type!'
@@ -461,11 +464,13 @@ def readfile(filename):
     csvReader = csv.reader(f,delimiter=',',quotechar='"')
     times = list()
     days = list()
+    headers = dict()
+
     for row in csvReader:
       if len(row) > 0:
-        if row[0].count('/') == 0:
-          if not row[0].startswith('kWh'):
-            parseHeader(row)
+        if row[0].count('/') == 0: # Test for date field, e.g. 3/14/2010
+          if not row[0].startswith('kWh'): # Time header's first field
+            parseHeader(row, headers)
           else:
             times = parseTimes(row)
         else:
@@ -540,9 +545,11 @@ if __name__ == '__main__':
         start = rfc3339.FromTimestamp(reading.dStart.isoformat())
         end = rfc3339.FromTimestamp(reading.dEnd.isoformat())
         meter.PostDur(start,end,reading.energy * units.KILOWATT_HOUR,reading.uncertainty * units.KILOWATT_HOUR)
-      service.Flush()
+      if not options.isDebug:
+        service.Flush()
       break
-    service.Flush()
+    if not options.isDebug:
+      service.Flush()
     print "There remains %d measurements to upload." % len(readings)
     for k in range(10):
       print "Sleeping for %d minutes." % (10-k)
