@@ -1,0 +1,6 @@
+# This config file should be placed in ~/.local/pge2google/config
+# (Actually it uses $XDG_CONFIG_HOME/pge2google/config if you care)
+[main]
+token: abcdefg1234-hijkl_zwyzfk
+variable: /user/12345/67890/variable/mynet.pge2google.fkhsalsf16.d1
+

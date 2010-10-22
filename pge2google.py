@@ -35,14 +35,14 @@
 # For example, Google says your path is "/user/1234/5678/variable/abcde"
 # The variable is then                  "/user/1234/5678/variable/abcde.d1"
 #
-# 3) Download your data files from PG&E. If you can automate this, I'd
-# love to get a script!
-# 
-# 4) Run those files through this script. Note that Google doesn't
-# like you to upload too quickly. Ideally you should upload 1 csv file
-# every 10 minutes. If you go faster, then eventually Google will
-# block you for a while.
+# 2b) (Optional) Set up a config file in ~/.local/pge2google/config
+#                If you do, you don't need to provide --token and --variable
 #
+# 3) Download your data files from PG&E. Matt Colyer has a ruby script for this
+#    at http://github.com/mcolyer/smartermeter
+# 
+# 4) Call this script:
+#    python pge2google.py --token TOKEN --variable VAR Data1.csv data2.csv [...]
 #
 # Features: Directly uploads to Google PowerMeter. 
 #           Handles Daylight Savings transitions correctly as of 2010. 
